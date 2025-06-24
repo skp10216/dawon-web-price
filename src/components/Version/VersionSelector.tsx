@@ -29,12 +29,18 @@ type VersionMeta = {
     label: string;
 };
 
-interface VersionSelectorProps {
+export interface VersionSelectorProps {
+    // === 공통/비교용 ===
+    label?: string;
+    selectedId?: string | null;
+    onChange?: (id: string) => void;
+    loading?: boolean;  // Compare 등 외부에서 로딩 제어
+    // === 관리/임시데이터용 ===
     refreshKey?: any;
-    onVersionChange: (rows: PriceTableRow[], meta: VersionMeta | null) => void;
+    onVersionChange?: (rows: PriceTableRow[], meta: VersionMeta | null) => void;
     overrideSelectedId?: string | null;
     onVersionIdInit?: (id: string) => void;
-    showExcelTemp?: boolean;    // ← 상위에서 명시적으로 전달
+    showExcelTemp?: boolean;
 }
 
 // ===== 버전 라벨 생성 함수 =====
@@ -53,14 +59,19 @@ function makeVersionLabel(meta: {
 }
 
 const VersionSelector: React.FC<VersionSelectorProps> = ({
+    label = "버전 선택",
+    selectedId,
+    onChange,
+    loading = false,
+
     onVersionChange,
     refreshKey,
     overrideSelectedId,
     onVersionIdInit,
-    showExcelTemp = false,    // ← 기본값 false
+    showExcelTemp = false,
 }) => {
     const [versions, setVersions] = useState<VersionMeta[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [fetching, setFetching] = useState(true);
     const [selected, setSelected] = useState<string>("");
 
     // overrideSelectedId가 바뀌면 선택값 덮어쓰기
@@ -70,10 +81,10 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
         }
     }, [overrideSelectedId]);
 
-    // 버전 목록 불러오기
+    // 버전 목록 불러오기 (비교든 관리든 공통)
     useEffect(() => {
         const fetchVersions = async () => {
-            setLoading(true);
+            setFetching(true);
             try {
                 const snap = await getDocs(collection(db, "priceTables"));
                 const list: VersionMeta[] = [];
@@ -98,18 +109,18 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
                 const sorted = list.sort((a, b) => (b.updatedAt ?? 0) > (a.updatedAt ?? 0) ? 1 : -1);
                 setVersions(sorted);
 
-                // 최초 선택
-                if (sorted.length > 0 && !overrideSelectedId) {
+                // 최초 선택 및 관리모드의 콜백 처리
+                if (sorted.length > 0 && !overrideSelectedId && onVersionChange) {
                     const firstId = sorted[0].id;
                     setSelected(firstId);
                     fetchAndSetVersion(firstId, onVersionChange);
                     onVersionIdInit?.(firstId);
-                } else if (!overrideSelectedId) {
+                } else if (!overrideSelectedId && onVersionChange) {
                     setSelected("");
                     onVersionChange([], null);
                 }
             } finally {
-                setLoading(false);
+                setFetching(false);
             }
         };
         const fetchAndSetVersion = async (versionId: string, onVersionChange: VersionSelectorProps["onVersionChange"]) => {
@@ -117,7 +128,7 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
             const docSnap = await getDoc(docRef);
             if (docSnap.exists()) {
                 const data = docSnap.data();
-                onVersionChange(
+                onVersionChange?.(
                     data.data ?? [],
                     {
                         id: versionId,
@@ -140,58 +151,74 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
         fetchVersions();
     }, [refreshKey, overrideSelectedId, onVersionChange, onVersionIdInit]);
 
-    // value 관리
+    // value 관리(공통)
     const versionIds = versions.map(v => v.id);
     const availableValues = [
         ...(showExcelTemp ? ["excel_temp"] : []),
         ...versionIds,
     ];
-    const actualSelected = availableValues.includes(selected) ? selected : "";
+    // Compare용: selectedId, 관리용: selected (overrideSelectedId로도 제어)
+    const actualSelected =
+        selectedId !== undefined && selectedId !== null
+            ? selectedId
+            : availableValues.includes(selected)
+                ? selected
+                : "";
 
-    // 서버 데이터 선택시 임시항목 숨김 (상위에서 showExcelTemp=false로 만들면 사라짐)
+    // 선택 변경
     const handleChange = useCallback(
         async (e: any) => {
             const versionId = e.target.value;
-            // 임시데이터 선택 중 다른 서버 데이터로 이동 시
-            if (showExcelTemp && versionId !== "excel_temp") {
-                const ok = window.confirm(
-                    "서버에 저장되지 않았습니다. 저장하지 않는 데이터는 손실됩니다.\n계속하시겠습니까?"
-                );
-                if (!ok) return;
-                // 여기서는 showExcelTemp 상태를 직접 조작하지 않고 상위가 해제!
+            // Compare/공통: onChange prop으로 콜백
+            if (onChange) {
+                onChange(versionId);
             }
-            setSelected(versionId);
-            if (versionId !== "excel_temp") {
-                const docRef = doc(db, "priceTables", versionId);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    onVersionChange(
-                        data.data ?? [],
-                        {
-                            id: versionId,
-                            versionName: data.versionName ?? "",
-                            updatedAt: data.updatedAt ? data.updatedAt.toDate?.()?.toLocaleString() : "",
-                            category: data.category ?? "",
-                            partner: data.partner ?? "",
-                            region: data.region ?? "",
-                            label: makeVersionLabel({
+            // 관리/임시데이터: onVersionChange로 동작
+            if (onVersionChange) {
+                if (versionId !== "excel_temp") {
+                    const docRef = doc(db, "priceTables", versionId);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        onVersionChange(
+                            data.data ?? [],
+                            {
+                                id: versionId,
+                                versionName: data.versionName ?? "",
+                                updatedAt: data.updatedAt ? data.updatedAt.toDate?.()?.toLocaleString() : "",
                                 category: data.category ?? "",
                                 partner: data.partner ?? "",
                                 region: data.region ?? "",
-                                versionName: data.versionName ?? versionId,
-                                id: versionId,
-                            }),
-                        }
-                    );
+                                label: makeVersionLabel({
+                                    category: data.category ?? "",
+                                    partner: data.partner ?? "",
+                                    region: data.region ?? "",
+                                    versionName: data.versionName ?? versionId,
+                                    id: versionId,
+                                }),
+                            }
+                        );
+                    }
+                } else {
+                    onVersionChange([], null);
                 }
-            } else {
-                // 엑셀 임시 데이터 선택 시, 실제 데이터 및 meta는 상위에서 관리
-                onVersionChange([], null);
             }
+            setSelected(versionId);
         },
-        [onVersionChange, showExcelTemp, versions]
+        [onChange, onVersionChange, showExcelTemp, versions]
     );
+
+    // value를 항상 메뉴에 있는 값 또는 ''로 제한
+    const availableVersionIds = availableValues;
+    const safeValue =
+        (loading || fetching || availableVersionIds.length === 0)
+            ? ""
+            : (
+                actualSelected &&
+                    availableVersionIds.includes(actualSelected)
+                    ? actualSelected
+                    : ""
+            );
 
     return (
         <FormControl
@@ -208,16 +235,16 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
                 },
             }}
         >
-            <InputLabel id="version-label">버전 선택</InputLabel>
+            <InputLabel id="version-label">{label}</InputLabel>
             <Select
                 labelId="version-label"
-                value={actualSelected}
-                label="버전 선택"
+                value={safeValue}
+                label={label}
                 onChange={handleChange}
-                disabled={loading}
+                disabled={loading || fetching}
                 sx={{ fontWeight: 700 }}
             >
-                {loading ? (
+                {(loading || fetching) ? (
                     <MenuItem value="">
                         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                             <CircularProgress size={18} />

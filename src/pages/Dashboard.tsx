@@ -19,6 +19,7 @@ import ExcelPreviewDialog from "../components/Upload/ExcelPreviewDialog";
 import type { PriceTableRow } from "../components/DataTable/samplePriceTableData";
 import { savePriceTableToFirestore } from "../utils/savePriceTable";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ComparePage from "../components/Compare/ComparePage";
 
 const Dashboard: React.FC = () => {
     // 엑셀 미리보기 상태
@@ -29,6 +30,7 @@ const Dashboard: React.FC = () => {
 
     const [isTempData, setIsTempData] = useState(false); // ← 업로드 후 true, 저장 후 false
     const [isSaved, setIsSaved] = useState(false);
+    const [compareOpen, setCompareOpen] = useState(false);
 
     const [metaInfo, setMetaInfo] = useState<{
         category: string;
@@ -44,7 +46,7 @@ const Dashboard: React.FC = () => {
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const [versionName, setVersionName] = useState("");
     const [saveLoading, setSaveLoading] = useState(false);
-    
+
 
     // 스낵바(알림)
     const [saveSnackbar, setSaveSnackbar] = useState<{
@@ -156,7 +158,7 @@ const Dashboard: React.FC = () => {
         }
         setSaveLoading(true);
         try {
-            const newVersionId  = await savePriceTableToFirestore({
+            const newVersionId = await savePriceTableToFirestore({
                 ...metaInfo,
                 versionName: versionName,
                 data: tableRows,
@@ -167,7 +169,7 @@ const Dashboard: React.FC = () => {
                 severity: "success"
             });
             setIsTempData(false);
-            setIsSaved(true); 
+            setIsSaved(true);
             setSaveDialogOpen(false);
             setVersionRefreshKey(prev => prev + 1);
             setOverrideVersionId(newVersionId); // <- 저장된 버전 ID로 덮어씌움
@@ -379,12 +381,12 @@ const Dashboard: React.FC = () => {
                             <VersionSelector
                                 refreshKey={versionRefreshKey}
                                 overrideSelectedId={overrideVersionId}
-                                showExcelTemp={isTempData}     
+                                showExcelTemp={isTempData}
                                 onVersionChange={(rows, meta) => {
                                     setTableRows(rows);
                                     setSelectedMeta(meta);
                                     setMetaInfo(meta);
-                                    setIsSaved(false); 
+                                    setIsSaved(false);
                                 }}
                                 onVersionIdInit={(id) => setOverrideVersionId(id)} // ✅ 최초 선택 상태 반영
                             />
@@ -413,6 +415,15 @@ const Dashboard: React.FC = () => {
                                 }}
                             >
                                 엑셀 다운로드
+                            </Button>
+
+                            <Button
+                                variant="outlined"
+                                color="primary"
+                                onClick={() => setCompareOpen(true)}
+                                sx={{ ml: 2 }}
+                            >
+                                버전 비교하기
                             </Button>
                         </Stack>
                     </Stack>
@@ -547,7 +558,7 @@ const Dashboard: React.FC = () => {
                                 반드시 <b>서버에 저장</b> 버튼을 눌러주세요.
                             </span>
                         </Alert>
-                    ) : 
+                    ) :
                         isSaved ? (
                             <Alert
                                 icon={<CheckCircleIcon fontSize="inherit" />}
@@ -556,8 +567,8 @@ const Dashboard: React.FC = () => {
                             >
                                 단가표가 <b>정상적으로 서버에 저장</b>되었습니다.
                             </Alert>
-                        ) : null }
-                    
+                        ) : null}
+
                 </Stack>
 
                 {/* 서버로 저장 버튼 */}
@@ -679,6 +690,16 @@ const Dashboard: React.FC = () => {
                         {saveLoading ? "저장 중..." : "저장"}
                     </Button>
                 </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={compareOpen}
+                onClose={() => setCompareOpen(false)}
+                maxWidth="xl"
+                fullWidth
+                PaperProps={{ sx: { borderRadius: 3 } }}
+            >
+                <ComparePage onClose={() => setCompareOpen(false)} />
             </Dialog>
 
             {/* 서버 저장 결과 알림 */}

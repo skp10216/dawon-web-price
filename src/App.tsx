@@ -3,6 +3,7 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import TestPage from "./pages/TestPage";
+
 // 필요한 경우 다른 페이지 import
 
 const App: React.FC = () => (
@@ -13,6 +14,7 @@ const App: React.FC = () => (
       {/* Dashboard 라우트 추가 */}
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/TestPage" element={<TestPage />} />
+  
       {/* 추후 추가될 다른 페이지 예시 */}
       {/* <Route path="/settings" element={<Settings />} /> */}
       {/* <Route path="*" element={<NotFound />} /> */}
