@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
     AppBar, Toolbar, Typography, IconButton, Box, Paper, Stack, Button, Container, Badge, Breadcrumbs,
     Link, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Snackbar, Chip, Alert, alpha, Card, CardContent, Divider
@@ -22,16 +22,17 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ComparePage from "../components/Compare/ComparePage";
 
 const Dashboard: React.FC = () => {
-    // 엑셀 미리보기 상태
-    const [previewData, setPreviewData] = useState<Record<string, any>[]>([]);
-    const [previewOpen, setPreviewOpen] = useState<boolean>(false);
-    const [versionRefreshKey, setVersionRefreshKey] = useState(0);
-    const [overrideVersionId, setOverrideVersionId] = useState<string | null>(null);
+    // 엑셀 임시 데이터
+    const [excelTempRows, setExcelTempRows] = useState<PriceTableRow[] | null>(null);
+    const [excelTempMeta, setExcelTempMeta] = useState<{
+        category: string;
+        partner: string;
+        region: string;
+        versionName: string;
+    } | null>(null);
 
-    const [isTempData, setIsTempData] = useState(false); // ← 업로드 후 true, 저장 후 false
-    const [isSaved, setIsSaved] = useState(false);
-    const [compareOpen, setCompareOpen] = useState(false);
-
+    // 메인 데이터 (Firestore or 임시)
+    const [tableRows, setTableRows] = useState<PriceTableRow[] | null>(null);
     const [metaInfo, setMetaInfo] = useState<{
         category: string;
         partner: string;
@@ -39,14 +40,41 @@ const Dashboard: React.FC = () => {
         versionName: string;
     } | null>(null);
 
-    // DataTable rows 데이터(엑셀 적용 시 변경됨)
-    const [tableRows, setTableRows] = useState<PriceTableRow[] | null>(null);
+
+
+    // 현재 선택된 버전ID ("excel_temp" or firestore 버전id)
+    const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+
+    const gridRows = useMemo(
+        () =>
+            selectedVersionId === "excel_temp" && excelTempRows
+                ? excelTempRows
+                : tableRows ?? [],
+        [selectedVersionId, excelTempRows, tableRows]
+    );
+
+    const gridMeta = useMemo(
+        () =>
+            selectedVersionId === "excel_temp" && excelTempMeta
+                ? excelTempMeta
+                : metaInfo ?? null,
+        [selectedVersionId, excelTempMeta, metaInfo]
+    );
+
+    // 기타 상태들
+    const [previewData, setPreviewData] = useState<Record<string, any>[]>([]);
+    const [previewOpen, setPreviewOpen] = useState<boolean>(false);
+    const [versionRefreshKey, setVersionRefreshKey] = useState(0);
+    const [overrideVersionId, setOverrideVersionId] = useState<string | null>(null);
+
+    const [isTempData, setIsTempData] = useState(false); // 임시데이터 여부 (엑셀 업로드)
+    const [isSaved, setIsSaved] = useState(false);
+    const [compareOpen, setCompareOpen] = useState(false);
 
     // 파일명(버전명) 입력 다이얼로그 상태
     const [saveDialogOpen, setSaveDialogOpen] = useState(false);
     const [versionName, setVersionName] = useState("");
     const [saveLoading, setSaveLoading] = useState(false);
-
 
     // 스낵바(알림)
     const [saveSnackbar, setSaveSnackbar] = useState<{
@@ -69,13 +97,6 @@ const Dashboard: React.FC = () => {
         };
         return categoryMap[category] || category;
     };
-
-    const [selectedMeta, setSelectedMeta] = useState<{
-        category: string;
-        partner: string;
-        region: string;
-        versionName: string;
-    } | null>(null);
 
     // 지역 한글 변환 함수
     const getRegionLabel = (region: string) => {
@@ -138,17 +159,23 @@ const Dashboard: React.FC = () => {
             서브잔상차감_대: row.서브잔상차감_대 !== undefined ? Number(row.서브잔상차감_대) : null,
         }));
 
-        setMetaInfo({ category, partner, region, versionName });
-        setSelectedMeta({ category, partner, region, versionName });
-        setTableRows(priceRows);
+        // 임시 데이터 저장 및 선택 값 전환
+        setExcelTempRows(priceRows);
+        setExcelTempMeta({ category, partner, region, versionName });
+        setSelectedVersionId("excel_temp");
+        setIsTempData(true);
         setIsSaved(false);
-        setPreviewOpen(false);  // 다이얼로그 닫기
-        setOverrideVersionId("excel_temp"); // ✅ 강제 선택 값
+        setPreviewOpen(false);
+        setOverrideVersionId("excel_temp");
     };
 
     // 파일명(버전명) 입력 후 저장 실행
     const handleSaveToServer = async () => {
-        if (!tableRows || tableRows.length === 0 || !metaInfo) {
+        // "임시데이터" 상태이면 임시데이터 사용, 아니면 tableRows/metaInfo 사용
+        const saveRows = selectedVersionId === "excel_temp" && excelTempRows ? excelTempRows : tableRows;
+        const saveMeta = selectedVersionId === "excel_temp" && excelTempMeta ? excelTempMeta : metaInfo;
+
+        if (!saveRows || saveRows.length === 0 || !saveMeta) {
             setSaveSnackbar({
                 open: true,
                 message: "저장할 데이터가 없습니다.",
@@ -159,9 +186,9 @@ const Dashboard: React.FC = () => {
         setSaveLoading(true);
         try {
             const newVersionId = await savePriceTableToFirestore({
-                ...metaInfo,
+                ...saveMeta,
                 versionName: versionName,
-                data: tableRows,
+                data: saveRows,
             });
             setSaveSnackbar({
                 open: true,
@@ -169,10 +196,13 @@ const Dashboard: React.FC = () => {
                 severity: "success"
             });
             setIsTempData(false);
+            setExcelTempRows(null);
+            setExcelTempMeta(null);
             setIsSaved(true);
             setSaveDialogOpen(false);
             setVersionRefreshKey(prev => prev + 1);
-            setOverrideVersionId(newVersionId); // <- 저장된 버전 ID로 덮어씌움
+            setSelectedVersionId(newVersionId); // 새로운 버전으로 자동 선택
+            setOverrideVersionId(newVersionId); // 호환성
         } catch (e) {
             setSaveSnackbar({
                 open: true,
@@ -184,10 +214,9 @@ const Dashboard: React.FC = () => {
         }
     };
 
-
     // "서버로 저장" 버튼 클릭 → 파일명(버전명) 입력 다이얼로그 열기
     const handleOpenSaveDialog = () => {
-        const meta = metaInfo || selectedMeta;
+        const meta = selectedVersionId === "excel_temp" && excelTempMeta ? excelTempMeta : metaInfo;
         const todayStr = getTodayString();
         let defaultVersionName = "";
         if (meta) {
@@ -197,6 +226,14 @@ const Dashboard: React.FC = () => {
         setSaveDialogOpen(true);
     };
 
+    // ===== VersionSelector와 Table 동기화 =====
+    // VersionSelector에서 버전 선택 시 데이터 처리
+    const handleVersionChange = (rows: PriceTableRow[], meta: any) => {
+        setTableRows(rows);
+        setMetaInfo(meta);
+        setIsSaved(false);
+    };
+    
     return (
         <Box
             sx={{
@@ -380,15 +417,12 @@ const Dashboard: React.FC = () => {
                             </Typography>
                             <VersionSelector
                                 refreshKey={versionRefreshKey}
+                                selectedId={selectedVersionId}
                                 overrideSelectedId={overrideVersionId}
                                 showExcelTemp={isTempData}
-                                onVersionChange={(rows, meta) => {
-                                    setTableRows(rows);
-                                    setSelectedMeta(meta);
-                                    setMetaInfo(meta);
-                                    setIsSaved(false);
-                                }}
-                                onVersionIdInit={(id) => setOverrideVersionId(id)} // ✅ 최초 선택 상태 반영
+                                onChange={setSelectedVersionId}
+                                onVersionChange={handleVersionChange}
+                                onVersionIdInit={id => setSelectedVersionId(id)}
                             />
                         </Box>
 
@@ -430,7 +464,7 @@ const Dashboard: React.FC = () => {
                 </Box>
 
                 {/* 업로드된 데이터 메타 정보 표시 */}
-                {selectedMeta && (
+                {gridMeta && (
                     <Card
                         elevation={0}
                         sx={{
@@ -478,7 +512,7 @@ const Dashboard: React.FC = () => {
                                         종류:
                                     </Typography>
                                     <Chip
-                                        label={getCategoryLabel(selectedMeta.category)}
+                                        label={getCategoryLabel(gridMeta.category)}
                                         size="small"
                                         sx={{
                                             bgcolor: alpha("#3b82f6", 0.1),
@@ -495,7 +529,7 @@ const Dashboard: React.FC = () => {
                                         거래처:
                                     </Typography>
                                     <Chip
-                                        label={selectedMeta.partner}
+                                        label={gridMeta.partner}
                                         size="small"
                                         sx={{
                                             bgcolor: alpha("#10b981", 0.1),
@@ -512,7 +546,7 @@ const Dashboard: React.FC = () => {
                                         지역:
                                     </Typography>
                                     <Chip
-                                        label={getRegionLabel(selectedMeta.region)}
+                                        label={getRegionLabel(gridMeta.region)}
                                         size="small"
                                         sx={{
                                             bgcolor: alpha("#f59e0b", 0.1),
@@ -528,7 +562,7 @@ const Dashboard: React.FC = () => {
                 )}
 
                 {/* 업로드 안내 메시지 (데이터가 없을 때) */}
-                {!metaInfo && (
+                {!gridMeta && (
                     <Alert
                         severity="info"
                         sx={{
@@ -550,7 +584,6 @@ const Dashboard: React.FC = () => {
                         <Alert
                             icon={<CloudUploadIcon fontSize="inherit" />}
                             severity="warning"
-                        // ...
                         >
                             <span>
                                 <b>임시 데이터</b>입니다. 저장하지 않으면 서버에 반영되지 않습니다.
@@ -563,7 +596,6 @@ const Dashboard: React.FC = () => {
                             <Alert
                                 icon={<CheckCircleIcon fontSize="inherit" />}
                                 severity="success"
-                            // ...
                             >
                                 단가표가 <b>정상적으로 서버에 저장</b>되었습니다.
                             </Alert>
@@ -576,7 +608,13 @@ const Dashboard: React.FC = () => {
                     <Button
                         variant="contained"
                         color="primary"
-                        disabled={!tableRows || tableRows.length === 0 || saveLoading}
+                        disabled={
+                            // 임시데이터면 excelTempRows, 아니면 tableRows
+                            (selectedVersionId === "excel_temp"
+                                ? !excelTempRows || excelTempRows.length === 0
+                                : !tableRows || tableRows.length === 0
+                            ) || saveLoading
+                        }
                         onClick={handleOpenSaveDialog}
                         sx={{
                             minWidth: 160,
@@ -594,7 +632,7 @@ const Dashboard: React.FC = () => {
                     </Button>
                 </Stack>
 
-                {!selectedMeta && (!tableRows || tableRows.length === 0) ? (
+                {!gridMeta && (!gridRows || gridRows.length === 0) ? (
                     <Alert
                         severity="error"
                         sx={{
@@ -621,8 +659,11 @@ const Dashboard: React.FC = () => {
                         }}
                     >
                         <DataTable
-                            rows={tableRows ?? []}
-                            onRowsChange={(rows) => setTableRows(rows)}
+                            rows={gridRows}
+                            onRowsChange={(rows) => {
+                                if (selectedVersionId === "excel_temp") setExcelTempRows(rows);
+                                else setTableRows(rows);
+                            }}
                         />
                     </Paper>
                 )}
@@ -681,7 +722,13 @@ const Dashboard: React.FC = () => {
                     <Button
                         variant="contained"
                         onClick={handleSaveToServer}
-                        disabled={!versionName.trim() || saveLoading || !tableRows || tableRows.length === 0}
+                        disabled={!versionName.trim() ||
+                            saveLoading ||
+                            (selectedVersionId === "excel_temp"
+                                ? !excelTempRows || excelTempRows.length === 0
+                                : !tableRows || tableRows.length === 0
+                            )
+                        }
                         sx={{
                             borderRadius: 2,
                             background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)"

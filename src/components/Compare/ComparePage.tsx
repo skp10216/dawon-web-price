@@ -24,6 +24,17 @@ async function fetchVersionData(versionId: string): Promise<PriceTableRow[]> {
     return [];
 }
 
+function formatNumber(value: any) {
+    if (typeof value === 'number' && !isNaN(value)) {
+        return value.toLocaleString();
+    }
+    // 문자열 타입인데 숫자로 변환 가능한 경우에도 포맷
+    if (typeof value === 'string' && !isNaN(Number(value))) {
+        return Number(value).toLocaleString();
+    }
+    return value ?? '';
+}
+
 // ---- diff 타입 정의 ----
 type DiffType = 'added' | 'deleted' | 'changed' | 'same';
 
@@ -49,11 +60,16 @@ function getAdvancedDiff(
     rows1: PriceTableRow[],
     rows2: PriceTableRow[]
 ): RowDiff[] {
-    const map1 = new Map(rows1.map((row) => [row.코드, row]));
-    const map2 = new Map(rows2.map((row) => [row.코드, row]));
-    const allCodes = Array.from(new Set([...map1.keys(), ...map2.keys()]));
-    const IGNORED_FIELDS = ["_searchableText", "_sortIndex"];
-    // 순서: 중요 필드 우선, 나머지 오름차순
+    // 복합키(모델+코드) 생성 함수
+    const getKey = (row: PriceTableRow) => `${row.모델}__${row.코드}`;
+
+    // Map: 복합키 기준 매핑
+    const map1 = new Map(rows1.map((row) => [getKey(row), row]));
+    const map2 = new Map(rows2.map((row) => [getKey(row), row]));
+    const allKeys = Array.from(new Set([...map1.keys(), ...map2.keys()]));
+
+    const IGNORED_FIELDS = ["_searchableText", "_sortIndex","id"];
+    // 모든 필드 집합 정리
     const allFields = new Set<string>();
     [...rows1, ...rows2].forEach(row => {
         Object.keys(row).forEach(field => {
@@ -70,11 +86,12 @@ function getAdvancedDiff(
 
     const result: RowDiff[] = [];
 
-    allCodes.forEach((code) => {
-        const r1 = map1.get(code);
-        const r2 = map2.get(code);
+    allKeys.forEach((key) => {
+        const r1 = map1.get(key);
+        const r2 = map2.get(key);
         let rowType: DiffType = 'same';
         const cells: CellDiff[] = [];
+
         if (!r1 && r2) {
             rowType = 'added';
             orderedFields.forEach(field => {
@@ -122,8 +139,11 @@ function getAdvancedDiff(
             });
             rowType = hasChanges ? 'changed' : 'same';
         }
-        // 모델명은 첫 번째로 찾은 유효한 값 사용
+
+        // 복합키 기준으로 모델/코드 추출
         const modelName = r1?.모델 || r2?.모델 || '';
+        const code = r1?.코드 || r2?.코드 || '';
+
         result.push({
             코드: code,
             모델: modelName,
@@ -134,7 +154,12 @@ function getAdvancedDiff(
         });
     });
 
-    return result.sort((a, b) => a.코드.localeCompare(b.코드));
+    // 복합키 기준 정렬 (모델+코드)
+    return result.sort((a, b) => {
+        const keyA = `${a.모델}__${a.코드}`;
+        const keyB = `${b.모델}__${b.코드}`;
+        return keyA.localeCompare(keyB);
+    });
 }
 
 // ---- 스타일 ----
@@ -218,15 +243,15 @@ const ComparePage: React.FC<ComparePageProps> = ({ onClose }) => {
     const renderCellValue = (cell: CellDiff) => {
         switch (cell.diffType) {
             case 'added':
-                return <Box sx={{ color: '#059669', fontWeight: 600 }}>{String(cell.value2 ?? '')}</Box>;
+                return <Box sx={{ color: '#059669', fontWeight: 600 }}>{formatNumber(cell.value2 ?? '')}</Box>;
             case 'deleted':
-                return <Box sx={{ color: '#dc2626', fontWeight: 600, textDecoration: 'line-through' }}>{String(cell.value1 ?? '')}</Box>;
+                return <Box sx={{ color: '#dc2626', fontWeight: 600, textDecoration: 'line-through' }}>{formatNumber(cell.value1 ?? '')}</Box>;
             case 'changed':
                 return (
                     <Box>
-                        <Box sx={{ color: '#64748b', fontSize: '0.875rem', textDecoration: 'line-through' }}>{String(cell.value1 ?? '')}</Box>
+                        <Box sx={{ color: '#64748b', fontSize: '0.875rem', textDecoration: 'line-through' }}>{formatNumber(cell.value1 ?? '')}</Box>
                         <Box sx={{ color: 'black', fontWeight: 600, fontSize: '0.875rem' }}>
-                            {String(cell.value2 ?? '')}
+                            {formatNumber(cell.value2 ?? '')}
                             {cell.changePercent !== undefined &&
                                 <Chip
                                     label={`${cell.changePercent > 0 ? '+' : ''}${cell.changePercent}%`}
@@ -243,7 +268,7 @@ const ComparePage: React.FC<ComparePageProps> = ({ onClose }) => {
                     </Box>
                 );
             default:
-                return <Box sx={{ color: '#64748b' }}>{String(cell.value1 ?? cell.value2 ?? '')}</Box>;
+                return <Box sx={{ color: '#64748b' }}>{formatNumber(cell.value1 ?? cell.value2 ?? '')}</Box>;
         }
     };
 
@@ -377,14 +402,32 @@ const ComparePage: React.FC<ComparePageProps> = ({ onClose }) => {
                             <Table size="small">
                                 <TableHead>
                                     <TableRow sx={{ backgroundColor: '#f8fafc' }}>
-                                        <TableCell sx={{ fontWeight: 700, color: '#374151' }}>상태</TableCell>
-                                        <TableCell sx={{ fontWeight: 700, color: '#374151' }}>모델</TableCell>
-                                        <TableCell sx={{ fontWeight: 700, color: '#374151' }}>코드</TableCell>
+                                        <TableCell sx={{ fontWeight: 700, color: '#374151', textAlign: 'center' }}>상태</TableCell>
+                                        <TableCell sx={{ fontWeight: 700, color: '#374151', textAlign: 'center' }}>모델</TableCell>
+                                        <TableCell sx={{ fontWeight: 700, color: '#374151', textAlign: 'center' }}>코드</TableCell>
                                         {tableFields
-                                            .filter(f => f !== "모델" && f !== "코드") // <== 여기서 제거!
+                                            .filter(f => f !== "모델" && f !== "코드")
                                             .map(f => (
-                                                <TableCell key={f} sx={{ fontWeight: 700, color: '#374151' }}>
-                                                    {f}
+                                                <TableCell
+                                                    key={f}
+                                                    sx={{
+                                                        fontWeight: 700,
+                                                        color: '#374151',
+                                                        whiteSpace: 'normal',
+                                                        wordBreak: 'keep-all',
+                                                        overflowWrap: 'break-word',
+                                                        lineHeight: 1.3,
+                                                        maxWidth: 90, // 필요에 따라 조절
+                                                        minWidth: 60,
+                                                        textAlign: 'center',
+                                                        padding: '10px 4px'
+                                                    }}
+                                                >
+                                                    <Tooltip title={f} arrow>
+                                                        <Box sx={{ whiteSpace: 'pre-line', fontWeight: 700 }}>
+                                                            {(f)}
+                                                        </Box>
+                                                    </Tooltip>
                                                 </TableCell>
                                             ))}
                                     </TableRow>
