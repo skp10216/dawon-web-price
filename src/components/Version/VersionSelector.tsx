@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
     FormControl, InputLabel, Select, MenuItem, CircularProgress, Box, Typography
 } from "@mui/material";
@@ -18,7 +18,6 @@ const REGION_MAP: Record<string, string> = {
     global: "국외"
 };
 
-// ===== 메타 정보 타입 =====
 type VersionMeta = {
     id: string;
     versionName: string;
@@ -69,6 +68,7 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
 }) => {
     const [versions, setVersions] = useState<VersionMeta[]>([]);
     const [fetching, setFetching] = useState(true);
+    const lastFetchedVersionId = useRef<string | null>(null);
 
     // 버전 목록 fetch
     useEffect(() => {
@@ -120,7 +120,7 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
     const actualSelected =
         selectedId && availableValues.includes(selectedId)
             ? selectedId
-            :  "";
+            : "";
 
     // 드롭다운에서 선택 변경 시
     const handleChange = useCallback(
@@ -132,7 +132,7 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
         [onChange]
     );
 
-    // selectedId(즉, 실제 선택 값)가 바뀔 때마다 Firestore에서 fetch → onVersionChange 콜백
+    // selectedId가 바뀔 때만 Firestore fetch → onVersionChange 콜백
     useEffect(() => {
         // excel_temp는 Dashboard에서 상태 관리, 여기서는 패스
         if (
@@ -140,11 +140,18 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
             selectedId !== "excel_temp" &&
             versions.some(v => v.id === selectedId)
         ) {
+            // 🚩 중복 fetch 방지: 마지막으로 fetch한 버전과 다를 때만 fetch
+            if (lastFetchedVersionId.current === selectedId) {
+                return;
+            }
+            lastFetchedVersionId.current = selectedId;
+
             const fetchAndSetVersion = async () => {
                 const docRef = doc(db, "priceTables", selectedId);
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     const data = docSnap.data();
+                    // 부모의 데이터와 실제로 다를 때만 콜백 실행 (불변성 체크)
                     onVersionChange?.(
                         data.data ?? [],
                         {
@@ -167,9 +174,9 @@ const VersionSelector: React.FC<VersionSelectorProps> = ({
             };
             fetchAndSetVersion();
         } else if (selectedId === "excel_temp") {
-            // 임시 데이터는 Dashboard에서 별도 처리(필요시 onVersionChange([], null) 호출 가능)
+            // 임시 데이터는 Dashboard에서 별도 처리
         }
-        // versions도 watch! (버전이 갱신된 경우)
+        // eslint-disable-next-line
     }, [selectedId, versions, onVersionChange]);
 
     return (

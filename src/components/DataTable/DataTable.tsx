@@ -32,6 +32,7 @@ import debounce from "lodash.debounce";
 // =====================
 interface DataTableProps {
   rows?: PriceTableRow[];
+  initialRows?: PriceTableRow[] | null; // [🟡추가] 원본 rows (셀 하이라이트 비교용)
   onRowsChange?: (rows: PriceTableRow[]) => void;
 }
 
@@ -107,7 +108,7 @@ const preprocessRows = (rows: PriceTableRow[]): SearchableRow[] => {
   return rows.map(row => {
     const sortIndex = 모델정렬Map.get(row.모델) ?? 999999;
     const searchableText = `${row.모델} ${row.코드}`.toLowerCase();
-    
+
     return {
       ...row,
       _searchableText: searchableText,
@@ -152,9 +153,9 @@ const CustomToolbar = React.memo(() => {
 });
 
 // =====================
-// 메인 테이블 컴포넌트 (최적화본)
+// 메인 테이블 컴포넌트 (변경 셀 하이라이트 반영)
 // =====================
-const DataTable: React.FC<DataTableProps> = React.memo(({ rows, onRowsChange }) => {
+const DataTable: React.FC<DataTableProps> = React.memo(({ rows, initialRows, onRowsChange }) => {
   // ----- 상태관리 -----
   const [dataRows, setDataRows] = React.useState<PriceTableRow[]>(rows && rows.length > 0 ? rows : [...priceTableSampleData]);
   const [rowSaving, setRowSaving] = React.useState<Record<number, boolean>>({});
@@ -163,8 +164,6 @@ const DataTable: React.FC<DataTableProps> = React.memo(({ rows, onRowsChange }) 
     { open: false, message: "", severity: "success" }
   );
   const [paginationModel, setPaginationModel] = React.useState<GridPaginationModel>({ page: 0, pageSize: 20 });
-  
-  // 검색어 상태 (단일 상태로 통합)
   const [searchText, setSearchText] = React.useState("");
 
   // ----- 전처리된 데이터 캐시 (정렬 + 검색용 텍스트 미리 계산) -----
@@ -216,10 +215,23 @@ const DataTable: React.FC<DataTableProps> = React.memo(({ rows, onRowsChange }) 
     return null;
   }, [rowSaving, rowSaved]);
 
-  // ----- 셀 클래스 -----
+  // ----- 셀 클래스: 변경셀 하이라이트 -----
   const getCellClassName = React.useCallback(
-    (params: any) => params.isEditable && params.hasFocus ? "editing-cell" : "",
-    []
+    (params: any) => {
+      if (!initialRows) return params.isEditable && params.hasFocus ? "editing-cell" : "";
+      // 원본 row 찾기
+      const originRow = initialRows.find(r => r.id === params.id);
+      // 데이터 비교 (undefined/null/NaN 모두 === 연산)
+      const field = params.field as keyof PriceTableRow;
+
+      if (originRow && originRow[field] !== undefined && params.value !== undefined) {
+        if (originRow[field] !== params.value) {
+          return "cell-changed";
+        }
+      }
+      return params.isEditable && params.hasFocus ? "editing-cell" : "";
+    },
+    [initialRows]
   );
 
   // ----- 컬럼 정의 고정 (재생성 방지) -----
@@ -243,41 +255,34 @@ const DataTable: React.FC<DataTableProps> = React.memo(({ rows, onRowsChange }) 
     }
   ], [getCellClassName, renderRowSaveIndicator]);
 
-  // ----- 디바운스된 검색 함수 (검색 로직 최적화) -----
+  // ----- 디바운스된 검색 함수 -----
   const debouncedSearch = React.useRef(
     debounce((searchTerm: string, rows: SearchableRow[], callback: (filtered: SearchableRow[]) => void) => {
       if (!searchTerm.trim()) {
         callback(rows);
         return;
       }
-      
       const searchLower = searchTerm.toLowerCase();
       const filtered = rows.filter(row => row._searchableText.includes(searchLower));
       callback(filtered);
-    }, 150) // 디바운스 시간을 150ms로 설정
+    }, 150)
   ).current;
 
-  // ----- 필터링된 데이터 상태 -----
   const [filteredRows, setFilteredRows] = React.useState<SearchableRow[]>([]);
-  
-  // ----- 검색 실행 -----
+
   React.useEffect(() => {
     debouncedSearch(searchText, preprocessedRows, setFilteredRows);
   }, [searchText, preprocessedRows]);
 
-  // ----- 초기 데이터 설정 -----
   React.useEffect(() => {
     if (!searchText.trim()) {
       setFilteredRows(preprocessedRows);
     }
   }, [preprocessedRows, searchText]);
 
-  // ----- 검색 입력 핸들러 (즉시 반응을 위한 최적화) -----
   const handleSearchChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchText(value);
-    
-    // 빈 검색어일 때는 즉시 전체 데이터 표시
     if (!value.trim()) {
       setFilteredRows(preprocessedRows);
     }
@@ -369,6 +374,11 @@ const DataTable: React.FC<DataTableProps> = React.memo(({ rows, onRowsChange }) 
                 }
               },
               "& .editing-cell": { bgcolor: "#dbeafe !important", border: "2px solid #3b82f6 !important", borderRadius: 1 },
+              "& .cell-changed": {
+                bgcolor: "#FEF08A !important", // 하이라이트 옐로
+                transition: "background 0.3s",
+                fontWeight: 700
+              },
               "& .MuiDataGrid-footerContainer": {
                 bgcolor: "#fafbfc",
                 borderTop: "2px solid #e2e8f0",
